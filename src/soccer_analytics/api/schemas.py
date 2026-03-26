@@ -85,3 +85,22 @@ class PlayerConsistencyResponse(BaseModel):
     rating_stddev: float
     consistency_score: float
     updated_at: datetime
+
+
+class HeatmapCellResponse(BaseModel):
+    zone_row: int
+    zone_col: int
+    touch_count: int
+
+
+class PlayerHeatmapMatchResponse(BaseModel):
+    match_provider_id: str
+    match_date: datetime
+    cells: list[HeatmapCellResponse]
+
+
+class PlayerHeatmapResponse(BaseModel):
+    player_provider_id: str
+    last_n_games: int
+    matches: list[PlayerHeatmapMatchResponse]
+    rolling_cells: list[HeatmapCellResponse]

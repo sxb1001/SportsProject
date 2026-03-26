@@ -68,6 +68,16 @@ class PlayerMatchStat(BaseModel):
     passes_completed: int
 
 
+class PlayerHeatmapCell(BaseModel):
+    match_provider_id: str
+    player_provider_id: str
+    team_provider_id: str
+    match_date: datetime
+    zone_row: int
+    zone_col: int
+    touch_count: int
+
+
 class InjuryRecord(BaseModel):
     player_provider_id: str
     status: str
@@ -129,6 +139,9 @@ class PipelineBundle(BaseModel):
     matches: list[Match]
     match_stats: list[MatchStat]
     player_match_stats: list[PlayerMatchStat]
+    player_heatmap_cells: list[PlayerHeatmapCell] = []
+    team_performance_rows: list[TeamPerformanceRow] = []
+    player_consistency_rows: list[PlayerConsistencyRow] = []
     injuries: list[InjuryRecord] = []
     pulled_at: datetime
     source_name: str

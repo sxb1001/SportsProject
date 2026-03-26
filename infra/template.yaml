@@ -22,4 +22,4 @@ Resources:
   RefreshSchedule:
     Type: AWS::Events::Rule
     Properties:
-      ScheduleExpression: rate(15 minutes)
+      ScheduleExpression: cron(0 5 * * ? *)

@@ -9,6 +9,8 @@ from soccer_analytics.domain import PipelineBundle, PlayerConsistencyRow, TeamPe
 
 def build_team_performance_rows(bundle: PipelineBundle) -> list[TeamPerformanceRow]:
     team_lookup = {team.provider_id: team for team in bundle.teams}
+    league_lookup = {team.provider_id: team.league_code for team in bundle.teams}
+    season_lookup = {team.provider_id: team.season_year for team in bundle.teams}
     stats_by_team = defaultdict(
         lambda: {
             "matches_played": 0,
@@ -54,8 +56,8 @@ def build_team_performance_rows(bundle: PipelineBundle) -> list[TeamPerformanceR
         recent_results = stats["results"][-5:]
         rows.append(
             TeamPerformanceRow(
-                league_code=bundle.leagues[0].code,
-                season_year=bundle.seasons[0].year,
+                league_code=league_lookup[team_id],
+                season_year=season_lookup[team_id],
                 team_name=team_lookup[team_id].name,
                 matches_played=stats["matches_played"],
                 wins=stats["wins"],
@@ -120,8 +122,8 @@ def build_player_consistency_rows(bundle: PipelineBundle) -> list[PlayerConsiste
         team = team_lookup[player.team_provider_id]
         output.append(
             PlayerConsistencyRow(
-                league_code=bundle.leagues[0].code,
-                season_year=bundle.seasons[0].year,
+                league_code=team.league_code,
+                season_year=team.season_year,
                 team_name=team.name,
                 player_name=player.name,
                 position=player.position,

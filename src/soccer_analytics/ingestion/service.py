@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from soccer_analytics.config import Settings
 from soccer_analytics.domain import RefreshAuditRecord
+from soccer_analytics.ingestion.providers.api_football import ApiFootballProvider
 from soccer_analytics.ingestion.providers.base import SportsDataProvider
 from soccer_analytics.ingestion.providers.mock import MockSportsDataProvider
 from soccer_analytics.storage.repository import AnalyticsRepository
@@ -13,8 +14,11 @@ from soccer_analytics.transforms.metrics import build_player_consistency_rows, b
 
 
 def get_provider(settings: Settings) -> SportsDataProvider:
-    providers = {"mock": MockSportsDataProvider()}
-    return providers.get(settings.sports_provider, MockSportsDataProvider())
+    providers = {
+        "api_football": ApiFootballProvider(settings),
+        "mock": MockSportsDataProvider(),
+    }
+    return providers.get(settings.sports_provider, ApiFootballProvider(settings))
 
 
 class PipelineService:
@@ -47,8 +51,10 @@ class PipelineService:
         )
 
         records_ingested = self.repository.upsert_pipeline_bundle(bundle)
-        self.repository.replace_team_performance_snapshot(build_team_performance_rows(bundle))
-        self.repository.replace_player_consistency_snapshot(build_player_consistency_rows(bundle))
+        team_rows = bundle.team_performance_rows or build_team_performance_rows(bundle)
+        player_rows = bundle.player_consistency_rows or build_player_consistency_rows(bundle)
+        self.repository.replace_team_performance_snapshot(team_rows)
+        self.repository.replace_player_consistency_snapshot(player_rows)
 
         audit.completed_at = datetime.now(UTC)
         audit.status = "completed"

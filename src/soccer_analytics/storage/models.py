@@ -80,6 +80,17 @@ class PlayerMatchStatModel(Base):
     passes_completed: Mapped[int] = mapped_column(Integer)
 
 
+class PlayerHeatmapCellModel(Base):
+    __tablename__ = "player_heatmap_cells"
+    match_provider_id: Mapped[str] = mapped_column(String(100), ForeignKey("matches.provider_id"), primary_key=True)
+    player_provider_id: Mapped[str] = mapped_column(String(100), ForeignKey("players.provider_id"), primary_key=True)
+    zone_row: Mapped[int] = mapped_column(Integer, primary_key=True)
+    zone_col: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_provider_id: Mapped[str] = mapped_column(String(100), ForeignKey("teams.provider_id"))
+    match_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    touch_count: Mapped[int] = mapped_column(Integer)
+
+
 class InjuryModel(Base):
     __tablename__ = "injuries"
     player_provider_id: Mapped[str] = mapped_column(String(100), ForeignKey("players.provider_id"), primary_key=True)

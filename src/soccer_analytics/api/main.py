@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Query
+from collections import defaultdict
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from mangum import Mangum
 
 from soccer_analytics.api.dependencies import get_pipeline_service, get_repository
 from soccer_analytics.api.schemas import (
     HealthResponse,
+    HeatmapCellResponse,
     LeagueResponse,
+    PlayerHeatmapMatchResponse,
+    PlayerHeatmapResponse,
     PlayerConsistencyResponse,
     PlayerResponse,
     RefreshRunResponse,
@@ -194,8 +199,8 @@ HOME_HTML = """
       <h1>Soccer analytics you can actually open.</h1>
       <div class="lead">
         This built-in dashboard sits on top of the FastAPI backend and shows team performance,
-        player consistency, and pipeline freshness in the browser. Use the refresh action to load
-        the latest snapshot from the configured provider.
+        player consistency, provider coverage, and pipeline freshness in the browser. Use the
+        refresh action to load the latest snapshot from the configured provider.
       </div>
       <div class="actions">
         <button id="refresh-btn">Refresh Demo Data</button>
@@ -205,6 +210,30 @@ HOME_HTML = """
     </section>
 
     <section class="stats" id="stats"></section>
+
+    <section class="table-card" style="margin-bottom: 18px;">
+      <div class="table-head">
+        <h2>Filters</h2>
+        <span class="label">League, team, player, and rolling window</span>
+      </div>
+      <div style="padding: 18px 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px;">
+        <label class="label">League
+          <select id="league-filter" style="display:block;width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid var(--line);background:white;"></select>
+        </label>
+        <label class="label">Team
+          <select id="team-filter" style="display:block;width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid var(--line);background:white;"></select>
+        </label>
+        <label class="label">Player
+          <select id="player-filter" style="display:block;width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid var(--line);background:white;"></select>
+        </label>
+        <label class="label">Last games
+          <select id="window-filter" style="display:block;width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid var(--line);background:white;">
+            <option value="3" selected>3 games</option>
+            <option value="5">5 games</option>
+          </select>
+        </label>
+      </div>
+    </section>
 
     <section class="grid">
       <div class="table-card">
@@ -246,9 +275,30 @@ HOME_HTML = """
         </table>
       </div>
     </section>
+
+    <section class="grid" style="margin-top: 18px;">
+      <div class="table-card">
+        <div class="table-head">
+          <h2>Latest Match Heatmap</h2>
+          <span class="label" id="latest-heatmap-title">Availability depends on event-coordinate data</span>
+        </div>
+        <div id="latest-heatmap" style="padding:18px 20px;"></div>
+      </div>
+      <div class="table-card">
+        <div class="table-head">
+          <h2>Rolling Heatmap</h2>
+          <span class="label" id="rolling-heatmap-title">Free API-Football plans do not expose true XY heatmaps</span>
+        </div>
+        <div id="rolling-heatmap" style="padding:18px 20px;"></div>
+      </div>
+    </section>
   </div>
 
   <script>
+    let leagues = [];
+    let teams = [];
+    let players = [];
+
     async function fetchJson(url, options) {
       const response = await fetch(url, options);
       if (!response.ok) {
@@ -264,6 +314,7 @@ HOME_HTML = """
       const stats = [
         { label: "Teams tracked", value: teamRows.length || 0 },
         { label: "Players ranked", value: playerRows.length || 0 },
+        { label: "Leagues covered", value: new Set(teamRows.map((row) => row.league_code)).size || 0 },
         { label: "Top club", value: topTeam ? topTeam.team_name : "N/A" },
         { label: "Top player", value: topPlayer ? topPlayer.player_name : "N/A" },
         { label: "Last refresh", value: latestRun ? new Date(latestRun.completed_at || latestRun.started_at).toLocaleString() : "Not run yet" },
@@ -280,7 +331,7 @@ HOME_HTML = """
     function renderTeamTable(rows) {
       document.getElementById("team-body").innerHTML = rows.map((row) => `
         <tr>
-          <td>${row.team_name}</td>
+          <td>${row.team_name}<div class="label">${row.league_code}</div></td>
           <td>${row.points}</td>
           <td>${row.wins}-${row.draws}-${row.losses}</td>
           <td>${row.goals_for}/${row.goals_against}</td>
@@ -294,7 +345,7 @@ HOME_HTML = """
       document.getElementById("player-body").innerHTML = rows.map((row) => `
         <tr>
           <td>${row.player_name}</td>
-          <td>${row.team_name}</td>
+          <td>${row.team_name}<div class="label">${row.league_code}</div></td>
           <td>${row.minutes_played}</td>
           <td>${row.goals}/${row.assists}</td>
           <td>${row.average_rating.toFixed(2)}</td>
@@ -303,16 +354,120 @@ HOME_HTML = """
       `).join("");
     }
 
+    function setOptions(elementId, items, labelFn, valueFn) {
+      const element = document.getElementById(elementId);
+      element.innerHTML = items.map((item) => `<option value="${valueFn(item)}">${labelFn(item)}</option>`).join("");
+    }
+
+    function getSelectedLeague() {
+      return document.getElementById("league-filter").value || "ALL";
+    }
+
+    function getSelectedTeam() {
+      return document.getElementById("team-filter").value || "";
+    }
+
+    function getSelectedPlayer() {
+      return document.getElementById("player-filter").value || "";
+    }
+
+    function renderHeatmap(containerId, titleId, cells, title) {
+      document.getElementById(titleId).textContent = title;
+      const maxTouch = Math.max(...cells.map((cell) => cell.touch_count), 1);
+      const grouped = new Map();
+      for (const cell of cells) {
+        grouped.set(`${cell.zone_row}-${cell.zone_col}`, cell.touch_count);
+      }
+
+      let html = '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;">';
+      for (let row = 0; row < 4; row += 1) {
+        for (let col = 0; col < 6; col += 1) {
+          const count = grouped.get(`${row}-${col}`) || 0;
+          const intensity = count / maxTouch;
+          html += `<div title="Touches: ${count}" style="aspect-ratio:1/1;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;background:rgba(15,118,110,${0.12 + intensity * 0.88});color:${intensity > 0.55 ? 'white' : 'var(--ink)'};">${count}</div>`;
+        }
+      }
+      html += "</div>";
+      document.getElementById(containerId).innerHTML = html;
+    }
+
+    async function loadHeatmaps() {
+      const playerId = getSelectedPlayer();
+      if (!playerId) {
+        return;
+      }
+      const lastNGames = document.getElementById("window-filter").value;
+      try {
+        const heatmap = await fetchJson(`/analytics/player-heatmaps?player_provider_id=${encodeURIComponent(playerId)}&last_n_games=${lastNGames}`);
+        const latestMatch = heatmap.matches[0];
+        renderHeatmap(
+          "latest-heatmap",
+          "latest-heatmap-title",
+          latestMatch ? latestMatch.cells : [],
+          latestMatch ? `Most recent game: ${new Date(latestMatch.match_date).toLocaleDateString()}` : "No recent game data"
+        );
+        renderHeatmap(
+          "rolling-heatmap",
+          "rolling-heatmap-title",
+          heatmap.rolling_cells,
+          `Combined touches across last ${heatmap.last_n_games} games`
+        );
+      } catch (error) {
+        document.getElementById("latest-heatmap-title").textContent = "Unavailable on free provider";
+        document.getElementById("rolling-heatmap-title").textContent = "Requires event-coordinate data";
+        document.getElementById("latest-heatmap").innerHTML = "<div class='label'>API-Football's free data can power standings, fixtures, injuries, and player season stats, but not true per-touch XY heatmaps.</div>";
+        document.getElementById("rolling-heatmap").innerHTML = "<div class='label'>To support real heatmaps later, add an event-data provider such as StatsBomb-style coordinates for supported competitions.</div>";
+      }
+    }
+
+    function syncTeamOptions() {
+      const league = getSelectedLeague();
+      const filteredTeams = teams.filter((team) => league === "ALL" || team.league_code === league);
+      setOptions("team-filter", filteredTeams, (team) => team.name, (team) => team.provider_id);
+      syncPlayerOptions();
+    }
+
+    function syncPlayerOptions() {
+      const teamId = getSelectedTeam();
+      const filteredPlayers = players.filter((player) => !teamId || player.team_provider_id === teamId);
+      setOptions("player-filter", filteredPlayers, (player) => player.name, (player) => player.provider_id);
+    }
+
     async function loadDashboard() {
+      const league = getSelectedLeague();
+      const teamId = getSelectedTeam();
+      const teamMeta = teams.find((team) => team.provider_id === teamId);
+      const teamName = teamMeta ? teamMeta.name : "";
+
+      const teamUrl = league === "ALL" ? "/analytics/team-performance" : `/analytics/team-performance?league_code=${encodeURIComponent(league)}`;
+      const playerUrl = league === "ALL"
+        ? "/analytics/player-consistency"
+        : `/analytics/player-consistency?league_code=${encodeURIComponent(league)}`;
+
       const [teamRows, playerRows, runRows] = await Promise.all([
-        fetchJson("/analytics/team-performance"),
-        fetchJson("/analytics/player-consistency"),
+        fetchJson(teamUrl),
+        fetchJson(playerUrl),
         fetchJson("/pipeline/runs"),
       ]);
-      renderStats(teamRows, playerRows, runRows);
-      renderTeamTable(teamRows);
-      renderPlayerTable(playerRows);
+
+      const filteredTeamRows = teamName ? teamRows.filter((row) => row.team_name === teamName) : teamRows;
+      const filteredPlayerRows = teamName ? playerRows.filter((row) => row.team_name === teamName) : playerRows;
+
+      renderStats(filteredTeamRows, filteredPlayerRows, runRows);
+      renderTeamTable(filteredTeamRows);
+      renderPlayerTable(filteredPlayerRows);
+      await loadHeatmaps();
       document.getElementById("status").textContent = "Dashboard loaded.";
+    }
+
+    async function loadMetadata() {
+      [leagues, teams, players] = await Promise.all([
+        fetchJson("/leagues"),
+        fetchJson("/teams"),
+        fetchJson("/players"),
+      ]);
+      setOptions("league-filter", [{ code: "ALL", name: "All leagues" }, ...leagues], (league) => league.name, (league) => league.code);
+      syncTeamOptions();
     }
 
     async function refreshData() {
@@ -321,6 +476,7 @@ HOME_HTML = """
       document.getElementById("refresh-btn").disabled = true;
       try {
         await fetchJson("/pipeline/refresh", { method: "POST" });
+        await loadMetadata();
         await loadDashboard();
       } catch (error) {
         status.textContent = "Refresh failed. Check the API logs and configuration.";
@@ -330,7 +486,18 @@ HOME_HTML = """
     }
 
     document.getElementById("refresh-btn").addEventListener("click", refreshData);
-    loadDashboard().catch(async () => {
+    document.getElementById("league-filter").addEventListener("change", async () => {
+      syncTeamOptions();
+      await loadDashboard();
+    });
+    document.getElementById("team-filter").addEventListener("change", async () => {
+      syncPlayerOptions();
+      await loadDashboard();
+    });
+    document.getElementById("player-filter").addEventListener("change", loadHeatmaps);
+    document.getElementById("window-filter").addEventListener("change", loadHeatmaps);
+
+    loadMetadata().then(loadDashboard).catch(async () => {
       document.getElementById("status").textContent = "No snapshot yet. Loading demo data now...";
       try {
         await refreshData();
@@ -444,6 +611,58 @@ def player_consistency(
             minimum_minutes=minimum_minutes,
         )
     ]
+
+
+@app.get("/analytics/player-heatmaps", response_model=PlayerHeatmapResponse)
+def player_heatmaps(
+    player_provider_id: str,
+    last_n_games: int = Query(default=3, ge=1, le=5),
+    repository: AnalyticsRepository = Depends(get_repository),
+) -> PlayerHeatmapResponse:
+    rows = repository.get_player_heatmap_cells(player_provider_id=player_provider_id, last_n_games=last_n_games)
+    if not rows:
+        raise HTTPException(
+            status_code=501,
+            detail="True player heatmaps require event-coordinate data, which is not available from the configured free provider.",
+        )
+
+    grouped_matches: dict[str, dict[str, object]] = {}
+    rolling_totals: dict[tuple[int, int], int] = defaultdict(int)
+    for row in rows:
+        key = row.match_provider_id
+        if key not in grouped_matches:
+            grouped_matches[key] = {
+                "match_provider_id": row.match_provider_id,
+                "match_date": row.match_date,
+                "cells": [],
+            }
+        grouped_matches[key]["cells"].append(
+            HeatmapCellResponse(
+                zone_row=row.zone_row,
+                zone_col=row.zone_col,
+                touch_count=row.touch_count,
+            )
+        )
+        rolling_totals[(row.zone_row, row.zone_col)] += row.touch_count
+
+    matches = [
+        PlayerHeatmapMatchResponse(
+            match_provider_id=match_data["match_provider_id"],
+            match_date=match_data["match_date"],
+            cells=match_data["cells"],
+        )
+        for match_data in grouped_matches.values()
+    ]
+    rolling_cells = [
+        HeatmapCellResponse(zone_row=zone_row, zone_col=zone_col, touch_count=touch_count)
+        for (zone_row, zone_col), touch_count in sorted(rolling_totals.items())
+    ]
+    return PlayerHeatmapResponse(
+        player_provider_id=player_provider_id,
+        last_n_games=last_n_games,
+        matches=matches,
+        rolling_cells=rolling_cells,
+    )
 
 
 handler = Mangum(app)

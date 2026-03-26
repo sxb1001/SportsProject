@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,11 +13,17 @@ class Settings(BaseSettings):
     raw_database_url: str = "sqlite:///./data/soccer_analytics.db"
     aws_region: str = "us-east-1"
     s3_bucket: str = "soccer-analytics-raw"
-    sports_provider: str = "mock"
-    sports_api_base_url: str = "https://example.com"
+    sports_provider: str = "api_football"
+    sports_api_base_url: str = "https://v3.football.api-sports.io"
     sports_api_key: str = ""
-    default_league_code: str = "EPL"
+    sports_api_host: str = "v3.football.api-sports.io"
+    api_football_requests_per_minute: int = 9
+    default_league_code: str = "TOP5"
     default_season: int = 2024
+
+    @property
+    def project_root(self) -> Path:
+        return Path(__file__).resolve().parents[2]
 
 
 @lru_cache(maxsize=1)

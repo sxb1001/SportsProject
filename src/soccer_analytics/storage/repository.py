@@ -11,6 +11,7 @@ from soccer_analytics.storage.models import (
     LeagueModel,
     MatchModel,
     MatchStatModel,
+    PlayerHeatmapCellModel,
     PlayerConsistencySnapshotModel,
     PlayerMatchStatModel,
     PlayerModel,
@@ -26,30 +27,44 @@ class AnalyticsRepository:
         self.session = session
 
     def upsert_pipeline_bundle(self, bundle: PipelineBundle) -> int:
+        self.session.execute(delete(PlayerHeatmapCellModel))
+        self.session.execute(delete(PlayerMatchStatModel))
+        self.session.execute(delete(MatchStatModel))
+        self.session.execute(delete(InjuryModel))
+        self.session.execute(delete(MatchModel))
+        self.session.execute(delete(PlayerModel))
+        self.session.execute(delete(TeamModel))
+        self.session.execute(delete(SeasonModel))
+        self.session.execute(delete(LeagueModel))
+        self.session.commit()
+
         counts = 0
         for league in bundle.leagues:
-            self.session.merge(LeagueModel(**league.model_dump()))
+            self.session.add(LeagueModel(**league.model_dump()))
             counts += 1
         for season in bundle.seasons:
-            self.session.merge(SeasonModel(**season.model_dump()))
+            self.session.add(SeasonModel(**season.model_dump()))
             counts += 1
         for team in bundle.teams:
-            self.session.merge(TeamModel(**team.model_dump()))
+            self.session.add(TeamModel(**team.model_dump()))
             counts += 1
         for player in bundle.players:
-            self.session.merge(PlayerModel(**player.model_dump()))
+            self.session.add(PlayerModel(**player.model_dump()))
             counts += 1
         for match in bundle.matches:
-            self.session.merge(MatchModel(**match.model_dump()))
+            self.session.add(MatchModel(**match.model_dump()))
             counts += 1
         for match_stat in bundle.match_stats:
-            self.session.merge(MatchStatModel(**match_stat.model_dump()))
+            self.session.add(MatchStatModel(**match_stat.model_dump()))
             counts += 1
         for player_stat in bundle.player_match_stats:
-            self.session.merge(PlayerMatchStatModel(**player_stat.model_dump()))
+            self.session.add(PlayerMatchStatModel(**player_stat.model_dump()))
+            counts += 1
+        for heatmap_cell in bundle.player_heatmap_cells:
+            self.session.add(PlayerHeatmapCellModel(**heatmap_cell.model_dump()))
             counts += 1
         for injury in bundle.injuries:
-            self.session.merge(InjuryModel(**injury.model_dump()))
+            self.session.add(InjuryModel(**injury.model_dump()))
             counts += 1
         self.session.commit()
         return counts
@@ -134,3 +149,24 @@ class AnalyticsRepository:
         if minimum_minutes:
             stmt = stmt.where(PlayerConsistencySnapshotModel.minutes_played >= minimum_minutes)
         return list(self.session.scalars(stmt.order_by(PlayerConsistencySnapshotModel.consistency_score.desc())))
+
+    def get_player_heatmap_cells(self, player_provider_id: str, last_n_games: int = 3) -> list[PlayerHeatmapCellModel]:
+        recent_matches = (
+            select(PlayerHeatmapCellModel.match_provider_id)
+            .where(PlayerHeatmapCellModel.player_provider_id == player_provider_id)
+            .group_by(PlayerHeatmapCellModel.match_provider_id, PlayerHeatmapCellModel.match_date)
+            .order_by(PlayerHeatmapCellModel.match_date.desc())
+            .limit(last_n_games)
+        )
+        stmt = (
+            select(PlayerHeatmapCellModel)
+            .where(PlayerHeatmapCellModel.player_provider_id == player_provider_id)
+            .where(PlayerHeatmapCellModel.match_provider_id.in_(recent_matches))
+            .order_by(
+                PlayerHeatmapCellModel.match_date.desc(),
+                PlayerHeatmapCellModel.match_provider_id,
+                PlayerHeatmapCellModel.zone_row,
+                PlayerHeatmapCellModel.zone_col,
+            )
+        )
+        return list(self.session.scalars(stmt))
