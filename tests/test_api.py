@@ -13,6 +13,13 @@ def test_health_endpoint():
     assert response.json()["status"] == "ok"
 
 
+def test_homepage_serves_browser_dashboard():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Soccer Analytics Dashboard" in response.text
+    assert "Refresh Demo Data" in response.text
+
+
 def test_refresh_and_analytics_endpoints():
     init_db()
 
