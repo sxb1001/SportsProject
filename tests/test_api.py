@@ -1,3 +1,19 @@
+import os
+from pathlib import Path
+
+TEST_DB_PATH = Path(__file__).resolve().parent / "test_soccer_analytics.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["RAW_DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["SPORTS_PROVIDER"] = "mock"
+
+import os
+from pathlib import Path
+
+TEST_DB_PATH = Path(__file__).resolve().parent / "test_soccer_analytics.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["RAW_DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["SPORTS_PROVIDER"] = "mock"
+
 from fastapi.testclient import TestClient
 
 from soccer_analytics.api.dependencies import get_pipeline_service
