@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .env
 data/
+tests/test_soccer_analytics.db
 dist/
 build/
 *.pyc
